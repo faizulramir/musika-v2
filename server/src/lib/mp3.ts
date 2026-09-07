@@ -53,11 +53,27 @@ async function probe(file: string): Promise<{ meta: Record<string, string>; dura
   return { meta, durationS };
 }
 
+/**
+ * Some downloaders embed a full file path (with extension) as the title tag,
+ * e.g. `C:\...\Temp\YoutubePlaylistDownloader\Di Alam Fana Cintamu.jpg`.
+ * Reduce such values to just the filename without extension.
+ */
+function cleanTitle(raw: string): string {
+  let t = (raw || '').trim();
+  if (!t) return t;
+  const looksLikePath = /^[a-zA-Z]:[\\/]/.test(t) || t.includes('/') || t.includes('\\');
+  if (looksLikePath) {
+    t = path.basename(t).replace(/\.(mp3|m4a|wav|ogg|flac|jpg|jpeg|png|webp)$/i, '');
+  }
+  return t.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 /** Read ID3 tags + duration from an audio file using ffmpeg (robust to ID3v2.3/2.4). */
 async function readMp3Meta(file: string): Promise<Mp3Meta> {
   const { meta, durationS } = await probe(file);
+  const metaTitle = cleanTitle(meta.title);
   const fallbackTitle = path.basename(file, path.extname(file)).replace(/[_-]+/g, ' ').trim();
-  const title = meta.title || fallbackTitle;
+  const title = metaTitle || fallbackTitle;
   const artist = meta.artist || 'Unknown Artist';
   const album = meta.album || null;
   const year = meta.date ? parseInt(meta.date, 10) : null;
@@ -143,17 +159,33 @@ export async function processMp3(
     contentDuration = meta.durationS;
   }
 
-  // decide how many full 10s parts fit (up to 10). At least 1 if any audio.
+  // Instead of slicing the song into sequential 10s chunks, sample up to 10
+  // RANDOM 10-second windows from across the whole track. During a round one of
+  // these parts is then picked at random (see game/engine.ts).
   const src = trimmed ? trimmedWav : inputPath;
-  let count = Math.floor(contentDuration / PART_LEN);
-  count = Math.max(1, Math.min(MAX_PARTS, count));
+  const maxStart = Math.max(0, contentDuration - PART_LEN);
+
+  const chosen: number[] = [];
+  const seen = new Set<number>();
+  let attempts = 0;
+  const maxAttempts = MAX_PARTS * 40;
+  while (chosen.length < MAX_PARTS && attempts < maxAttempts) {
+    attempts++;
+    const start = Math.floor(Math.random() * (maxStart + 1)); // random integer second
+    if (seen.has(start)) continue;
+    // reject windows that overlap an existing one (keeps the 10 parts distinct)
+    if (chosen.some((s) => Math.abs(s - start) < PART_LEN)) continue;
+    seen.add(start);
+    chosen.push(start);
+  }
+  if (chosen.length === 0) chosen.push(0); // song shorter than one window
+  chosen.sort((a, b) => a - b);
 
   const parts: ProcessedSong['parts'] = [];
-  for (let i = 0; i < count; i++) {
-    const start = i * PART_LEN;
-    if (start >= contentDuration) break;
+  for (let i = 0; i < chosen.length; i++) {
+    const start = chosen[i];
     const len = Math.min(PART_LEN, contentDuration - start);
-    if (len < 2) break; // skip dust at the very end
+    if (len < 2) continue; // skip dust at the very end
     const outRel = `media/parts/${songSlug}/p${i}.mp3`;
     const outAbs = path.join(songDir, `p${i}.mp3`);
     const ok = await cutPart(src, start, len, outAbs);

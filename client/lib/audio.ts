@@ -8,6 +8,10 @@ import { API } from './api';
 class AudioPlayer {
   private howl: Howl | null = null;
 
+  // Gentle fade-in on (re)play so clips don't start at full volume abruptly.
+  private static readonly FADE_FROM = 0.1;
+  private static readonly FADE_MS = 400;
+
   private load(audioPath: string, onEnd?: () => void) {
     this.stop();
     const url = audioPath.startsWith('http') ? audioPath : `${API}/${audioPath}`;
@@ -27,11 +31,21 @@ class AudioPlayer {
   play(audioPath: string, onEnd?: () => void) {
     this.load(audioPath, onEnd);
     this.howl?.play();
+    this.fadeIn();
   }
 
   replay() {
     this.howl?.stop();
     this.howl?.play();
+    this.fadeIn();
+  }
+
+  /** Fade from a low volume up to full volume over FADE_MS. */
+  private fadeIn() {
+    const h = this.howl;
+    if (!h) return;
+    h.volume(AudioPlayer.FADE_FROM);
+    h.fade(AudioPlayer.FADE_FROM, 1, AudioPlayer.FADE_MS);
   }
 
   stop() {
