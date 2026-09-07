@@ -1,0 +1,63 @@
+# Musika — production stack (frontend + backend + nginx) on your VPS.
+# Reuses your existing MySQL (no db container here).
+#
+#   1. cp deploy/.env.example .env  -> fill in values
+#   2. docker compose up -d --build
+#
+# MySQL is expected at DATABASE_URL in .env (e.g. mysql://root:PASS@dbhost:3306/musika).
+# For a fresh MySQL you can also set INCLUDE_DB=true to run a managed MySQL 8.
+
+services:
+  backend:
+    build: ./server
+    image: musika-backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "4000:4000"
+    volumes:
+      - musika_media:/app/media
+    # NOTE: no depends_on for an external MySQL — the entrypoint waits for it.
+    # If you use the optional in-compose `db` service (profile "db"), it can be
+    # started before backend by running:  docker compose --profile db up -d
+
+  frontend:
+    build:
+      context: ./client
+      args:
+        NEXT_PUBLIC_API_URL: ""   # same origin via Nginx
+    image: musika-frontend
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/musika.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certbot:/etc/letsencrypt:ro
+    depends_on:
+      - frontend
+      - backend
+
+  # Optional managed MySQL (uncomment + set INCLUDE_DB). By default we rely on your VPS MySQL.
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    profiles: ["db"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-musika}
+      MYSQL_DATABASE: ${DB_NAME:-musika}
+    volumes:
+      - musika_db:/var/lib/mysql
+    ports:
+      - "3306:3306"
+
+volumes:
+  musika_media:
+  musika_db:

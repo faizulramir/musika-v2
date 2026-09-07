@@ -1,0 +1,191 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Profile {
+  id           String        @id @default(uuid()) @db.Char(36)
+  username     String        @unique @db.VarChar(32)
+  email        String?       @unique @db.VarChar(255)
+  passwordHash String        @map("password_hash") @db.VarChar(255)
+  avatarUrl    String?       @map("avatar_url") @db.VarChar(512)
+  isAdmin      Boolean       @default(false) @map("is_admin")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+  rooms        Room[]        @relation("Host")
+  memberships  RoomPlayer[]
+  answers      Answer[]
+  scores       GlobalScore[]
+
+  @@map("profiles")
+}
+
+model Genre {
+  id      Int      @id @default(autoincrement())
+  name    String   @unique @db.VarChar(50)
+  songs   Song[]
+
+  @@map("genres")
+}
+
+model Song {
+  id            String     @id @default(uuid()) @db.Char(36)
+  title         String     @db.VarChar(255)
+  artist        String     @db.VarChar(255)
+  genreId       Int        @map("genre_id")
+  genre         Genre      @relation(fields: [genreId], references: [id])
+  year          Int?       @db.SmallInt
+  difficulty    Difficulty @default(easy)
+  audioPath     String     @map("audio_path") @db.VarChar(512)
+  snippetStartS Float      @default(0) @map("snippet_start_s")
+  snippetLenS   Float      @default(8) @map("snippet_len_s")
+  isActive      Boolean    @default(true) @map("is_active")
+  album         String?    @db.VarChar(255)
+  sourceType    SourceType @default(demo) @map("source_type")
+  createdAt     DateTime   @default(now()) @map("created_at") @db.DateTime(3)
+  rounds        Round[]
+  parts         SongPart[]
+
+  @@index([genreId, difficulty])
+  @@index([isActive])
+  @@index([artist])
+  @@map("songs")
+}
+
+enum SourceType {
+  demo
+  uploaded
+}
+
+model SongPart {
+  id        String   @id @default(uuid()) @db.Char(36)
+  songId    String   @map("song_id") @db.Char(36)
+  song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  index     Int      @map("idx")
+  audioPath String   @map("audio_path") @db.VarChar(512)
+  startS    Float    @default(0) @map("start_s")
+  lenS      Float    @default(10) @map("len_s")
+
+  @@unique([songId, index])
+  @@map("song_parts")
+}
+
+enum Difficulty {
+  easy
+  medium
+  hard
+}
+
+model Room {
+  id        String      @id @default(uuid()) @db.Char(36)
+  code      String      @unique @db.VarChar(8)
+  hostId    String      @map("host_id") @db.Char(36)
+  host      Profile     @relation("Host", fields: [hostId], references: [id])
+  status    RoomStatus  @default(waiting)
+  mode      RoomMode    @default(multi)
+  settings  Json        @default("{}")
+  createdAt DateTime    @default(now()) @map("created_at") @db.DateTime(3)
+  players   RoomPlayer[]
+  matches   Match[]
+
+  @@map("rooms")
+}
+
+enum RoomStatus {
+  waiting
+  countdown
+  playing
+  finished
+}
+
+enum RoomMode {
+  multi
+  solo
+}
+
+model RoomPlayer {
+  roomId    String     @map("room_id") @db.Char(36)
+  room      Room       @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId    String     @map("user_id") @db.Char(36)
+  user      Profile    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seat      Int
+  score     Int        @default(0)
+  streak    Int        @default(0)
+  status    PlayerStatus @default(waiting)
+  joinedAt  DateTime   @default(now()) @map("joined_at") @db.DateTime(3)
+
+  @@id([roomId, userId])
+  @@map("room_players")
+}
+
+enum PlayerStatus {
+  waiting
+  playing
+  dropped
+  finished
+}
+
+model Match {
+  id         String   @id @default(uuid()) @db.Char(36)
+  roomId     String   @map("room_id") @db.Char(36)
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  startedAt  DateTime @default(now()) @map("started_at") @db.DateTime(3)
+  rounds     Round[]
+
+  @@index([roomId])
+  @@map("matches")
+}
+
+model Round {
+  id              String      @id @default(uuid()) @db.Char(36)
+  matchId         String      @map("match_id") @db.Char(36)
+  match           Match       @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  number          Int
+  songId          String      @map("song_id") @db.Char(36)
+  song            Song        @relation(fields: [songId], references: [id])
+  questionType    QuestionType
+  options         Json
+  correctOptionId String      @map("correct_option_id") @db.VarChar(8)
+  answers         Answer[]
+
+  @@index([matchId])
+  @@map("rounds")
+}
+
+enum QuestionType {
+  artist
+  song
+}
+
+model Answer {
+  id               String   @id @default(uuid()) @db.Char(36)
+  roundId          String   @map("round_id") @db.Char(36)
+  round            Round    @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  userId           String   @map("user_id") @db.Char(36)
+  user             Profile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectedOptionId String?  @map("selected_option_id") @db.VarChar(8)
+  isCorrect        Boolean? @map("is_correct")
+  timeMs           Int?     @map("time_ms")
+  points           Int      @default(0)
+  replayUsed       Int      @default(0) @map("replay_used")
+
+  @@unique([roundId, userId])
+  @@map("answers")
+}
+
+model GlobalScore {
+  id        String          @id @default(uuid()) @db.Char(36)
+  userId    String          @map("user_id") @db.Char(36)
+  user      Profile         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score     Int
+  mode      RoomMode        @default(multi)
+  createdAt DateTime        @default(now()) @map("created_at") @db.DateTime(3)
+
+  @@index([score])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("global_scores")
+}
